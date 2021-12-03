@@ -20,8 +20,11 @@ class MarcBot(Player):
         self.board = None
         self.color = None
         self.my_piece_captured_square = None
+
+        # Perimeter squares so sense doesn't pick one of these
         self.perimeter = [1,2,3,4,5,6,7,8,16,24,32,40,48,56,64,63,62,61,60,59,58,57,49,41,33,25,17,9]
         
+        # Reward for piece capture
         self.piece_val = {
             1 : 1,
             2 : 3,
@@ -32,52 +35,39 @@ class MarcBot(Player):
             None :0
         }
 
+        # Reward for being in check
         self.check_val = {
             True : -80,
             False : 0
         } 
 
-        # make sure stockfish environment variable exists
-        if STOCKFISH_ENV_VAR not in os.environ:
-            raise KeyError(
-                'TroutBot requires an environment variable called "{}" pointing to the Stockfish executable'.format(
-                    STOCKFISH_ENV_VAR))
 
-        # make sure there is actually a file
-        stockfish_path = os.environ[STOCKFISH_ENV_VAR]
-        if not os.path.exists(stockfish_path):
-            raise ValueError('No stockfish executable found at "{}"'.format(stockfish_path))
 
-        # initialize the stockfish engine
-        self.engine = chess.engine.SimpleEngine.popen_uci(stockfish_path, setpgrp=True)
 
     def fwd_search(self,board,depth_start,piece_val,check_val, disc):
 
+        # Set value to correctly set up FEN board
         if self.color == True:
             color_add = " w"
         else:
             color_add = " b"
         
         def fwd_search_recurse(board, depth,max_depth, disc):
+
+            # Initialize Values
             max_val = 0
             array_val = []
-            #print(self.color, board.board_fen() + color_add)
             board_new = chess.Board(board.board_fen() + color_add)
-            #print(self.color, self.color_add)
-            #print(board_new.board_fen(),list(board_new.legal_moves))
+            
+            # Sparse Sample for additional levels of depth
             k_val = int(len(list(board_new.legal_moves))/math.pow(2,max_depth-depth))
-            #print(max_depth, depth, k_val)
             moves_sample = random.choices(list(board_new.legal_moves),k=k_val)
-            #print(moves_sample)
+            
+            # For each move in sample, conduct evaluation and forward search.
             for moves in moves_sample:
+
+                # Initialize board
                 board_new = chess.Board(board.board_fen() + color_add)
-
-                #piece = board_new.piece_at(moves.from_square)
-
-                #board_new.remove_piece_at(moves.from_square)
-                #board_new.set_piece_at(moves.to_square,piece)
-                #board_new.clear_stack()
-                
 
                 capture_val = piece_val[board_new.piece_type_at(moves.to_square)]
 
@@ -86,48 +76,42 @@ class MarcBot(Player):
                 self_check_val = check_val[board_new.is_check()]
                 pos_val = capture_val + self_check_val
 
-                #print(moves, piece_val[board_new.piece_type_at(moves.to_square)])
+                # Update maximum utility if best
                 if pos_val > max_val:
                     max_val = pos_val
-                    move_val = moves
 
-                #board_new.push(moves)
-                #print(pos_val, moves)
                 if depth > 0:
-                    #print("at",depth)
-                    #for moves in list(board_new.legal_moves):
+                    # If not at max depth, recursively search
                     new_num = fwd_search_recurse(board_new, depth-1,depth_start, disc)[0]
                     
                     array_val.append([depth,moves,new_num])
 
                     max_val = max_val + math.pow(disc,(max_depth-depth))* new_num
-                    #print("if worked", max_val)
-                #chess.Move()
-                #print(board_new.board_fen())
-                #if depth == 0:
-                    #print("at 0", moves)
+                    
             return max_val, array_val
 
+        # Initialize arrays
         out_arr = []
         out_arr_all = []
-        #print(list(board.legal_moves))
         for moves in list(board.legal_moves):
-            #print(moves)
+            
+            # Initialize board
             board_start = chess.Board(board.board_fen() + color_add)
             
+            # Make next move
             board_start.push(moves)
-            #print(board_start.board_fen())
+
+            # Recursively search following moves
             next_move = fwd_search_recurse(board_start, depth_start,depth_start, disc)
-            #print(moves,next_move)
+
+            # Record results
             out_arr.append([moves,next_move[0]])
             out_arr_all.append(next_move[1])
-            #print(out_arr)
-
+            
         out_filt = pd.DataFrame(out_arr)
-        #print(out_filt)
+        
         out_filt_max = out_filt.iloc[out_filt[1].idxmax()][0]
-        #out_filt_max = out_filt[out_filt[1].max()]
-        #print(out_arr_all)
+        
         return out_filt_max
 
 
@@ -146,11 +130,6 @@ class MarcBot(Player):
         # if our piece was just captured, sense where it was captured
         if self.my_piece_captured_square:
             return self.my_piece_captured_square
-
-        # if we might capture a piece when we move, sense where the capture will occur
-        #future_move = self.choose_move(move_actions, seconds_left)
-        #if future_move is not None and self.board.piece_at(future_move.to_square) is not None:
-        #    return future_move.to_square
 
         # otherwise, just randomly choose a sense action, but don't sense on a square where our pieces are located
         for square, piece in self.board.piece_map().items():
@@ -188,46 +167,13 @@ class MarcBot(Player):
         try:
             self.board.turn = self.color
             self.board.clear_stack()
+            
+            # Execute forward search.  Tree depth is depth_start + 1.
+            
+            move1 = self.fwd_search(board = self.board,depth_start = 2,piece_val = self.piece_val,check_val = self.check_val, disc = 0.75)
 
-            ### Lets try to get crazy
-  
-
-            #board_new = chess.Board(self.board.board_fen())
-            #print(self.board)
-            move1 = self.fwd_search(board = self.board,depth_start = 2,piece_val = self.piece_val,check_val = self.check_val, disc = 0.5)
-
-            #max_val = 0
-            #move_val = random.choice(list(move_actions))
-
-            #for moves in list(move_actions):
-
-                # board_new = chess.Board(self.board.board_fen())
-
-                
-                # #print(moves)
-                # #print(board_new)
-
-                # board_new.clear_stack()
-
-
-                # #print(moves, piece_val[board_new.piece_type_at(moves.to_square)])
-                # if piece_val[board_new.piece_type_at(moves.to_square)] > max_val:
-
-                #     max_val = piece_val[board_new.piece_type_at(moves.to_square)]
-                #     move_val = moves
-                #     print(max_val, move_val)
-
-                # board_new.push(moves)
-                # #chess.Move()
-                # #print(board_new.board_fen())
-
-
-
-            ##### Ok, crazy enough
             move_val = chess.Move.from_uci(move1.uci())
-            #result = random.choice(move_actions + [None])
-            #result1 = chess.Move.from_uci(result.uci())
-            #print("mine moved:",move_val)
+            
             return move_val
 
         except chess.engine.EngineTerminatedError:
@@ -248,8 +194,4 @@ class MarcBot(Player):
 
     def handle_game_end(self, winner_color: Optional[Color], win_reason: Optional[WinReason],
                         game_history: GameHistory):
-        try:
-            # if the engine is already terminated then this call will throw an exception
-            self.engine.quit()
-        except chess.engine.EngineTerminatedError:
-            pass
+        pass
